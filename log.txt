@@ -1,0 +1,1045 @@
+
+_____________________________________
+Captain's Log 6/25/21
+Pushing to github...
+
+The current neural network doesn't seperate the features at all
+(features are just merged into a layer before they are reduced at all).
+
+I just fixed major issues in both board generation and in the application
+of MCTS (turns out we had to pick the *minimum* board, since we're playing
+hypothetical games for the *opponent*).  I also fixed an issue with testing:
+I was flipping the turn order of strategies 1 and 2 when they are pitted
+against each other, but I needed to *test* when order matters.
+
+The parameters of the net are:
+self.parameters = {
+    "layer1 activ func" : 'gelu',
+    "layer2 activ func" : 'gelu',
+    "output activ func" : 'linear',
+    "loss func" : 'mean_squared_error',
+    "num epochs" : 1000000000, # Note that we *really* stop when the net converges
+    "shuffle" : True,
+    "batch size" : 32
+}
+
+Training results:
+
+2x2:
+loss 0.0022, accuracy 100.0%
+Against random
+    P1 100.0%   P2 0.0%
+Against itself
+    P1 100.0%   P2 0.0%
+
+
+3x3:
+loss 0.0098, accuracy 75.43%
+Against random
+    P1 95.0%   P2 80.0%
+Against itself
+    P1 0.0%    P2 100.0%
+
+4x4:
+loss 0.0465, accuracy 29.71%
+Against random
+    P1 95.0%   P2 92.5%
+Against itself
+    P1 0.0%    P2 100.0%
+
+5x5:
+loss 0.0291, accuracy 17.80%
+Against random
+    P1 55.0%   P2 60.0%
+Against itself
+    P1 0.0%    P2 100.0%
+
+
+
+UPDATE: 6/29/21
+Separating the features isn't really necessary in this network; a "plain-ol"
+neural network might be enough.
+This I noticed because of the following results about the above parameters
+with this net:
+    input_A = Input(shape=(1,))
+    input_B = Input(shape=(1,))
+    input_C = Input(shape=(2*n + 2,))
+    input_D = Input(shape=(n**2,))
+
+    tempo_layer = Dense(1, activation=self.layer1actfn)(input_A)
+    dead_squares_layer = Dense(1, activation=self.layer1actfn)(input_B)
+    parity_layer = Dense(int(2*n+2), activation=self.layer1actfn)(input_C)
+    positional_layer = Dense(int(n**2), activation=self.layer1actfn)(input_D)
+
+    # We merge the features, and then include layers for high-level feature extraction and output.
+    merged_layer = Concatenate()([tempo_layer, dead_squares_layer, parity_layer, positional_layer])
+    abstract_layer = Dense(int(n**2), activation=self.layer2actfn)(merged_layer)
+    output_layer = Dense(1, activation=self.layer_out_actfn)(abstract_layer)
+
+    self.model = tf.keras.Model(inputs=[input_A, input_B, input_C, input_D], outputs=output_layer)
+
+Training results:
+
+2x2: (10 boards)
+loss 0.0023, accuracy 100.0%
+Against random
+    P1 100.0%   P2 0.0%
+Against itself
+    P1 100.0%   P2 0.0%
+
+
+3x3: (436 boards)
+loss 0.0111, accuracy 75.0%
+Against random
+    P1 91.0%   P2 87.0%
+Against itself
+    P1 0.0%    P2 100.0%
+
+4x4: (13962 boards)
+loss 0.0301, accuracy 32.10%
+Against random
+    P1 94.0%   P2 91.0%
+Against itself
+    P1 0.0%    P2 100.0%
+
+5x5: (57836 boards)
+loss 0.0289, accuracy 18.20%
+Against random
+    P1 74.0%   P2 46.0%
+Against itself
+    P1 100.0%    P2 0.0%
+
+*Note: "against itself" data is probably mostly trash,
+given that only one unique game is ever played.
+
+
+
+UPDATE: 9/2/21
+I'm running out of time.  So at this point, I'm going to systematically test the following
+choices against each other on a reasonable size game (4x4 boards):
+    1. feature selection
+    2. architecture choice
+    3. generating boards
+(These nets were trained with patience=20, min_delta=0.0001 early stopping,
+and were tested against random on 20 4x4 boards.)
+
+KEY:
+init->nbhd->flipped :           A procedure for generating boards.
+                                First produces some initial boards, then gathers boards in its neighborhood,
+                                then flips whose turn it is on these boards.  Just for board generation,
+                                the role of the teacher is de-emphasized.
+
+
+modal :                         A network architecture.  Multi-layered; in the first layer, features of different
+                                'modalities' (e.g. 'global' vs 'local' features) are separated, and then combined
+flat :                          A network architecture.  All the features are fed in, but there is a single
+                                "flattened" layer that abstracts away features before the output.
+
+____________________________________________________________________________________________________________
+TEST NO _
+____________________________________________________________________________________________________________
+FEATURES:       _
+ARCHITECTURE:   _
+BOARD GEN:      _
+_______________
+4x4: (_ boards)
+loss (mse) _
+Against random
+    P1 _%   P2 _%
+____________________________________________________________________________________________________________
+
+
+############################################################################################################
+9/2/21 Comparing and contrasting feature choices
+____________________________________________________________________________________________________________
+TEST NO 1
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; map of taken, dead, available squares; number of taken, dead, available squares
+ARCHITECTURE:   modal
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0103
+Against random
+    P1 75%   P2 65%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 2
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; map of taken, dead, available squares; number of taken, dead, available squares
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0374
+Against random
+    P1 75%   P2 60%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 3
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken, dead, available squares
+ARCHITECTURE:   modal
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0088
+Against random
+    P1 60%   P2 75%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 4
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken, dead, available squares
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0323
+Against random
+    P1 75%   P2 70%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 5 : trying to replicate 6/29/21 (unsuccessfully)
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0717
+Against random
+    P1 85%   P2 50%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 6
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (available); map of squares (taken)
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0777
+Against random
+    P1 55%   P2 65%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 7 : no 4, but with n**2 layer dimension instead of 2(n**2)
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken, dead, available squares
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0459
+Against random
+    P1 80%   P2 75%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 8 : no 7, but min_delta=0.005 instead of 0.0001, since I suspect the network is overfitting
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken, dead, available squares
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0574
+Against random
+    P1 50%   P2 55%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 9 : no 7, but min_delta=0.00005 instead of 0.0001, patience=30 since I suspect the network is underfitting
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken, dead, available squares
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0456
+Against random
+    P1 55%   P2 70%
+____________________________________________________________________________________________________________
+
+
+Thoughts:
+    - Test no. 7 is the best, but it's nothing to sneeze at
+    - Why reinvent the wheel?  Instead, I think I should:
+        - Take an implementation of AlphaZero
+        - Play around with the features, net architecture, and board generation method within it
+        - This also allows me to compare my results against Saul's paper as a baseline.
+    - See
+      https://github.com/suragnair/alpha-zero-general
+      for general game-playing with AlphaZero.
+
+
+############################################################################################################
+9/6/21 Convolutional Net Tests
+____________________________________________________________________________________________________________
+TEST NO 10: Transferred AlphaZero's convolutional net
+____________________________________________________________________________________________________________
+FEATURES:       map of taken
+ARCHITECTURE:   convolutional
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0965
+Against random
+    P1 80%   P2 60%
+4x4: (13962 boards)
+loss (mse) 0.0126
+Against random
+    P1 50%   P2 60%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 11: Adding features to the convolutional net (hybrid of tests 7 and 10)
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken squares
+ARCHITECTURE:   convolutional (map) feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards boards)
+loss (mse) 0.0141
+Against random
+    P1 85%   P2 85%
+4x4: (13962 boards)
+loss (mse) _
+Against random
+    P1 _%   P2 _%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 12:  Convolutional net + just the tempo flag
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; map of squares (taken)
+ARCHITECTURE:   convolutional (map) feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 
+Against random
+    P1 60%   P2 55%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 13:  Replication of the 6/19/21 net!!!
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) _
+Against random
+    P1 85%   P2 95%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 14:  6/19/21, but without num of dead squares
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0298
+Against random
+    P1 95%   P2 85%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 15:  6/19/21, but with only tempo flag
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0819
+Against random
+    P1 65%   P2 55%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 16:  6/19/21, but with only parity information
+____________________________________________________________________________________________________________
+FEATURES:       parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0297
+Against random
+    P1 85%   P2 90%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 17:  Convolutional net + features from test 14
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   convolutional (map) feeding into flat (using a merged layer)
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (_ boards)
+loss (mse) 0.0046
+Against random
+    P1 65%   P2 60%
+____________________________________________________________________________________________________________
+
+Thoughts:
+(Maybe) Why AlphaZero performs poorly on Notakto;
+In all games AlphaZero performs well on, e.g. go, chess, checkers, tic-tac-toe, and connect 4,
+it's easy to determine who the winner is by the final board state.  e.g. in chess see whose king
+is cornered, in checkers see whose pieces remain, in tic-tac-toe see whether X or O has n in a row.
+
+But in Notakto, the winner is ambiguous from the final board state alone.  Since all players play
+'X', the neural network is not given enough information to form a pattern between boards and winners.
+So the net needs to be fed this 'tempo bit' to tell it whose turn it is in each state.
+
+Another potential hangup is that Notakto uses misere play -- in all other AlphaZero games, the final
+move by a player gives them the win.  In Notakto, the final move by a player gives them a loss.
+This might be "negative information" that is difficult for a neural network to learn from the
+board states alone.  (I'm unsure how exactly this affects the learning process, though)
+
+Update 9/8: Yet another issue with AlphaZero might be that it uses a convolutional neural network.
+A convolutional net forms relationships between a square and surrounding squares in its region.
+But in Notakto, surrounding squares are not all necessarily relevant, leading the convolutional net
+to go down bad search trees.
+For example, in the board
+ _______
+|_|_|_|_|
+|_|_|_|B|
+|_|_|A|_|
+|_|_|_|_|
+Square B is immediately diagonal of square A.  But because B is not on the same row, column, or diagonal
+as A, an X on B has only indirect bearing on whether an X should be placed at A.  This is dissimilar
+to chess, where a pawn or bishop may attack diagonally (and so it would be important to track this
+information).
+
+All of this demonstrates just how much domain knowledge AlphaZero is really assuming about the game
+it plays.  Unfortunately, any choice in features whatsoever reflects knowledge about one's domain
+-- what is important, what is not -- and AlphaZero's convolutional net is no exception.
+
+
+
+############################################################################################################
+9/8/21 4x4, Trying to improve on best
+
+CONTROL GROUP:
+____________________________________________________________________________________________________________
+TEST NO 10: Transferred AlphaZero's convolutional net
+____________________________________________________________________________________________________________
+FEATURES:       map of taken
+ARCHITECTURE:   convolutional
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0965
+Against random
+    P1 80%   P2 60%
+4x4: (13962 boards)
+loss (mse) 0.0126
+Against random
+    P1 50%   P2 60%
+____________________________________________________________________________________________________________
+
+BEST BOARD FROM PREVIOUS:
+____________________________________________________________________________________________________________
+TEST NO 13:  6/19/21 (aka Test 13)
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) _
+Against random
+    P1 85%   P2 95%
+____________________________________________________________________________________________________________
+
+
+(The following nets were trained with patience=20, min_delta=0.0001 early stopping,
+and were tested against random on 100 4x4 boards.)
+____________________________________________________________________________________________________________
+TEST NO _
+____________________________________________________________________________________________________________
+FEATURES:       _
+ARCHITECTURE:   _
+BOARD GEN:      _
+_______________
+4x4: (13962 boards)
+loss (mse) _
+Against random
+    P1 _%   P2 _%
+____________________________________________________________________________________________________________
+
+
+____________________________________________________________________________________________________________
+TEST NO 18: CONTROL GROUP: AlphaZero convolutional net
+____________________________________________________________________________________________________________
+FEATURES:       map of taken
+ARCHITECTURE:   convolutional
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) _
+Against random
+    P1 _%   P2 _%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 19: PREVIOUS BEST: 6/19/21 (aka Test 13)
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0237
+Against random
+    P1 93%   P2 93%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 20:
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row/col/diag (taken); map of squares (taken) (row/col/diag put in independently)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+4x4: (13962 boards)
+loss (mse) 0.0131
+Against random
+    P1 92%   P2 92%
+____________________________________________________________________________________________________________
+
+
+
+
+---------------------------------------------------------
+Official Tests
+    Systems: 
+        Conv Net - AlphaZero's Convolutional NN (adapted from TicTacToe)
+        Feature Net - Our winner, system from Test 19
+    Board sizes: 3x3, 4x4, 5x5, 6x6
+    Early stopping:
+        min_delta=0.0001
+        patience=20
+    Against:
+        random_selection
+        greedy
+
+We cannot test against itself, since this prediction process is
+entirely deterministic (and so the games would end up being exactly
+the same).  See:
+https://chess.stackexchange.com/questions/19482/randomness-in-engine-play
+
+AlphaZero uses actual MCTS (our tree search in the preliminary tests isn't
+actually random at all), and so AlphaZero will play a different game each time.
+
+---------------------------------------------------------
+PRELIMINARY TESTS (basic MCTS, learn from training set)
+---------------------------------------------------------
+----------------------------  ---------------------------
+CONV NET                        FEATURE NET
+----------------------------  ---------------------------
+3x3: (436 boards)               3x3: (436 boards)
+loss (mse) _.___                loss (mse) 0.0019
+Against random                  Against random
+    P1 __%   P2 __%                 P1 89%  P2 84%
+Against greedy                  Against greedy  
+    P1 __%    P2 __%                P1 72%  P2 46%
+Against itself                  Against itself
+    P1 __%    P2 __%                P1 61%  P2 39%
+
+4x4: (13962 boards)             4x4: (13962 boards)
+loss (mse) _.___                loss (mse) 0.0180
+Against random                  Against random
+    P1 __%   P2 __%                 P1 94%  P2 95%
+Against greedy                  Against greedy  
+    P1 __%    P2 __%                P1 39%  P2 58%
+Against itself                  Against itself
+    P1 __%    P2 __%                P1 39%  P2 61%
+
+5x5: ( boards)                  5x5: ( boards)
+loss (mse) _.___                loss (mse) _.___
+Against random                  Against random
+    P1 __%   P2 __%                 P1 __%  P2 __%
+Against greedy                  Against greedy  
+    P1 __%    P2 __%                P1 __%  P2 __%
+Against itself                  Against itself
+    P1 __%    P2 __%                P1 __%  P2 __%
+
+6x6: ( boards)                  6x6: ( boards)
+loss (mse) _.___                loss (mse) _.___
+Against random                  Against random
+    P1 __%   P2 __%                 P1 __%  P2 __%
+Against greedy                  Against greedy  
+    P1 __%    P2 __%                P1 __%  P2 __%
+Against itself                  Against itself
+    P1 __%    P2 __%                P1 __%  P2 __%
+
+---------------------------------------------------------
+ALPHAZERO TESTS (learn via repeated self-play)
+---------------------------------------------------------
+
+
+
+Update: 9/10/2021
+
+I realize now that the goal should not be competent play
+against random or greedy.  The goal should be to have the
+neural network *learn the strategy*, which we can see by its
+self-play results.  So I'm going to focus now *strictly* on
+getting a net to successfully learn the strategy for a 3x3
+board.
+
+
+____________________________________________________________________________________________________________
+TEST NO __: 
+____________________________________________________________________________________________________________
+FEATURES:       
+ARCHITECTURE:   
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) _.____
+Against itself
+    P1 __%   P2 __%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 21: 
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row/col/diag (taken); map of squares (taken) (row/col/diag put in independently)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0019
+Against itself
+    P1 60%   P2 40%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 22: 
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; map of taken, dead, available squares; number of taken, dead, available squares
+ARCHITECTURE:   modal
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0009
+Against itself
+    P1 65%   P2 35%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 23: 
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; map of taken, dead, available squares; number of taken, dead, available squares
+ARCHITECTURE:   flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0147
+Against itself
+    P1 57%   P2 43%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 24: 
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0177
+Against itself
+    P1 65%   P2 35%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 26: 
+____________________________________________________________________________________________________________
+FEATURES:       map of taken
+ARCHITECTURE:   convolutional
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0479
+Against itself
+    P1 77%   P2 23%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 27: 
+____________________________________________________________________________________________________________
+FEATURES:       parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken squares
+ARCHITECTURE:   convolutional (map), feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0390
+Against itself
+    P1 68%   P2 32%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 28: Same as test 25, but abstraction layer has size n instead of n**2
+____________________________________________________________________________________________________________
+FEATURES:       parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken squares
+ARCHITECTURE:   convolutional (map), feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (436 boards)
+loss (mse) 0.0390
+Against itself
+    P1 85%   P2 15%
+____________________________________________________________________________________________________________
+
+
+
+--------------------------------------------------------------
+PRELIMINARY TESTS (basic tree search, learn from training set)
+--------------------------------------------------------------
+----------------------------  -------------------------------------------
+CONV NET                        CONV + FEATURES + ABSTRACT LAYER (size n)
+----------------------------  -------------------------------------------
+3x3: (436 boards)               3x3: (450 boards)
+loss (mse) 0.1035                loss (mse) 0.0803
+Against random                  Against random
+    P1 91%    P2 86%                P1 91%  P2 85%
+Against greedy                  Against greedy  
+    P1 74%    P2 25%                P1 69%  P2 43%
+*********************           *********************
+Against itself                  Against itself
+    P1 100%    P2 0%                P1 85%  P2 15%
+*********************           *********************
+
+4x4: (13962 boards)             4x4: (13962 boards)
+loss (mse) _.___                loss (mse) _.____
+Against random                  Against random
+    P1 __%    P2 __%                P1 __%  P2 __%
+Against greedy                  Against greedy  
+    P1 __%    P2 __%                P1 __%  P2 __%
+*********************           *********************
+Against itself                  Against itself
+    P1 __%    P2 __%                P1 __%  P2 __%
+*********************           *********************
+
+5x5: ( boards)                  5x5: ( boards)
+loss (mse) _.___                loss (mse) _.___
+Against random                  Against random
+    P1 __%    P2 __%                P1 __%  P2 __%
+Against greedy                  Against greedy  
+    P1 __%    P2 __%                P1 __%  P2 __%
+*********************           *********************
+Against itself                  Against itself
+    P1 __%    P2 __%                P1 __%  P2 __%
+*********************           *********************
+
+6x6: ( boards)                  6x6: ( boards)
+loss (mse) _.___                loss (mse) _.___
+Against random                  Against random
+    P1 __%    P2 __%                P1 __%  P2 __%
+Against greedy                  Against greedy  
+    P1 __%    P2 __%                P1 __%  P2 __%
+*********************           *********************
+Against itself                  Against itself
+    P1 __%    P2 __%                P1 __%  P2 __%
+*********************           *********************
+
+
+
+9/20 update:
+How do the nets perform on a *small* amount of 3x3 boards?
+(98, not nearly enough to train on)
+
+____________________________________________________________________________________________________________
+TEST NO _: 
+____________________________________________________________________________________________________________
+FEATURES:       _
+ARCHITECTURE:   _
+BOARD GEN:      _
+_______________
+3x3: (98 boards)
+loss (mse) _.____
+Against itself
+    P1 __%   P2 __%
+Against greedy
+    P1 __%   P2 __%
+____________________________________________________________________________________________________________
+
+____________________________________________________________________________________________________________
+TEST NO 29:  Convolutional
+____________________________________________________________________________________________________________
+FEATURES:       map of taken
+ARCHITECTURE:   convolutional
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (98 boards)
+loss (mse) 0.3216
+Against itself
+    P1 23%   P2 77%
+Against greedy
+    P1 37%   P2 56%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 30:  Convolutional featured
+____________________________________________________________________________________________________________
+FEATURES:       parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken squares
+ARCHITECTURE:   convolutional (map), feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (98 boards)
+loss (mse) 0.0449
+Against itself
+    P1 87%   P2 13%
+Against greedy
+    P1 71%   P2 36%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 31:  Straight-up featured
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (98 boards)
+loss (mse) 0.0028
+Against itself
+    P1 64%   P2 36%
+Against greedy
+    P1 65%   P2 40%
+____________________________________________________________________________________________________________
+
+
+
+
+____________________________________________________________________________________________________________
+TEST NO 32:  Convolutional featured (abstract layer size: n)
+____________________________________________________________________________________________________________
+FEATURES:       parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken squares
+ARCHITECTURE:   convolutional (map), feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (98 boards)
+loss (mse) 0.0449
+Against itself
+    P1 87%   P2 13%
+Against greedy
+    P1 71%   P2 36%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 32:  Convolutional featured (abstract layer size: n**2)
+____________________________________________________________________________________________________________
+FEATURES:       parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken squares
+ARCHITECTURE:   convolutional (map), feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (98 boards)
+loss (mse) 0.0391
+Against itself
+    P1 28%   P2 71%
+Against greedy
+    P1 55%   P2 43%
+____________________________________________________________________________________________________________
+
+____________________________________________________________________________________________________________
+TEST NO 33:  Convolutional featured (abstract layer size: n) (Additional dropout layer)
+____________________________________________________________________________________________________________
+FEATURES:       parity flags for row, col, diag (taken); number of taken, dead, available squares; map of taken squares
+ARCHITECTURE:   convolutional (map), feeding into flat
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (98 boards)
+loss (mse) 0.0680
+Against itself
+    P1 95%   P2 05%
+Against greedy
+    P1 75%   P2 28%
+____________________________________________________________________________________________________________
+____________________________________________________________________________________________________________
+TEST NO 34:  Straight-up featured (Additional dropout layer)
+____________________________________________________________________________________________________________
+FEATURES:       tempo flag; number of squares (dead); parity flags for row, col, diag (taken); map of squares (taken)
+ARCHITECTURE:   flat, through a merged layer
+BOARD GEN:      init->nbhd->flipped
+_______________
+3x3: (98 boards)
+loss (mse) 0.0513
+Against itself
+    P1 61%   P2 39%
+Against greedy
+    P1 61%   P2 36%
+____________________________________________________________________________________________________________
+
+
+
+
+--------------------------------------------------------------
+PRELIMINARY TESTS (basic tree search, learn from training set)
+--------------------------------------------------------------
+----------------------------  ------------------------------------------------------------
+CONV NET                        CONV + FEATURES + ABSTRACT LAYER (size n) without DROPOUT
+----------------------------  ------------------------------------------------------------
+3x3: (155 boards)               3x3: (155 boards)   <-- about a fifth of the board space
+loss (mse) 0.0396               loss (mse) 0.0274
+Against itself                  Against itself
+    P1 92%    P2 08%                P1 100%  P2 0%  <-- the featnet seems to have figured out the strategy
+Against featured                Against conv
+    P1 100%   P2 1%                 P1 99%  P2 0%  <-- but this demonstrates that *both* fail when they aren't the same player
+Against random                  Against random
+    P1 90%    P2 84%                P1 94%  P2 82%
+Against greedy                  Against greedy  
+    P1 88%    P2 20%                P1 79%  P2 26%  <-- shows that *both* fail when they aren't the same player.
+
+
+4x4: (2378 boards)              4x4: (2378 boards)
+loss (mse) 0.0078               loss (mse) 0.0237
+Against itself                  Against itself
+    P1 92%    P2 8%                 P1 8%   P2 92%
+Against featured                Against conv
+    P1 18%    P2 82%                P1 18%  P2 82%
+Against random                  Against random
+    P1 91%    P2 96%                P1 93%  P2 94%
+Against greedy                  Against greedy  
+    P1 49%    P2 54%                P1 37%  P2 55%
+
+5x5: (9958 boards)              5x5: (9958 boards)
+loss (mse) 0.0014               loss (mse) _.___
+Against itself                  Against itself
+    P1 41%    P2 59%                P1 59%  P2 41%
+Against featured                Against conv
+    P1 47%    P2 49%                P1 51%  P2 53%
+Against random                  Against random
+    P1 99%    P2 96%                P1 99%  P2 99%
+Against greedy                  Against greedy  
+    P1 60%    P2 39%                P1 54%  P2 48%
+
+6x6: (79055 boards)             6x6: (79055 boards)
+loss (mse) _.___                loss (mse) _.___
+Against itself                  Against itself
+    P1 69%    P2 31%                P1 23%  P2 77%
+Against featured                Against conv
+    P1 33%    P2 53%                P1 47%  P2 67%
+Against random                  Against random
+    P1 99%    P2 98%                P1 100%  P2 99%
+Against greedy                  Against greedy  
+    P1 55%    P2 49%                P1 52%  P2 47%
+
+Update:
+I feel like such an idiot.  When I renamed 'greedy' and 'random',
+I accidentally labelled the board scores using 'random' instead
+of 'greedy'.  This resulted in much weaker board scores, which
+also explains why my net was performing so badly against the greedy algo.
+
+
+
+
+
+
+
+9/28/2021 UPDATE:
+
+I've been thinking about the game strategy a lot lately.  One thing that
+Thane Plambeck (the inventor of the game) mentions in his video
+http://markhuckvale.com/games/notakto/help.html
+is that the winning strategies for 3x3 and 4x4 boards are based on
+the player's *response* to their opponent's most recent move.
+
+My feedforward dense network can't learn responses to boards, since
+it just reads the static board as it's given.  So probably we should use
+an LSTM here, or have some other mechanism by which we feed the net the
+most recent opponent's move as input.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Post-quals tests on a flat network:
+
+-----------------------
+
+-----------------------
+Loss: _.____
+Against itself:
+    P1: _%    P2: _%
+Against greedy:
+    P1: _%    P2: _%
+
+
+3x3 boards
+-----------------------
+1) Just a flat net (size n**2)
+-----------------------
+Loss: 0.0011
+Against itself:
+    P1: 28%    P2: 72%
+Against greedy:
+    P1: 64%    P2: 44%
+-----------------------
+2) Flat net (size n)
+-----------------------
+Loss: 0.0272
+Against itself:
+    P1: 27%    P2: 73%
+Against greedy:
+    P1: 65%    P2: 22%
+-----------------------
+3) Flat, size n**2, with batch normalization
+-----------------------
+Loss: 0.0275
+Against itself:
+    P1: 100%    P2: 0%
+Against greedy:
+    P1: 85%    P2: 27%
+-----------------------
+4) Layered, size n**2 -> (1/2)n**2 -> n, with batch normalization
+-----------------------
+Loss: 0.0397
+Against itself:
+    P1: 16%    P2: 84%
+Against greedy:
+    P1: 68%    P2: 42%
+-----------------------
+5) Flat, size n**2, with batch normalization
+Force nondeterminism ONLY when doing self-play
+And set nondeterminism bias to 0.05
+-----------------------
+Loss: 0.0275
+Against itself:
+    P1: 100%    P2: 0%
+Against greedy:
+    P1: 86%    P2: 28%
+
+
+
+4x4 boards
+-----------------------
+6) (5) from before
+-----------------------
+Loss: 0.0198
+Against itself:
+    P1: 9%    P2: 91%
+Against greedy:
+    P1: 52%    P2: 56%
+
+
+
